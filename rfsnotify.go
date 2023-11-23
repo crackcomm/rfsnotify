@@ -2,6 +2,9 @@
 package rfsnotify
 
 import (
+	"fmt"
+
+	ignore "github.com/crackcomm/go-gitignore"
 	"gopkg.in/fsnotify.v1"
 
 	"errors"
@@ -13,6 +16,8 @@ import (
 type RWatcher struct {
 	Events chan fsnotify.Event
 	Errors chan error
+
+	ignoreRules *ignore.GitIgnore
 
 	done     chan struct{}
 	fsnotify *fsnotify.Watcher
@@ -37,12 +42,32 @@ func NewWatcher() (*RWatcher, error) {
 	return m, nil
 }
 
+// NewWatcherWithIgnore creates a new watcher with some `.gitignore` rules.
+func NewWatcherWithIgnore(ignoreRules *ignore.GitIgnore) (*RWatcher, error) {
+	w, err := NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+	w.ignoreRules = ignoreRules
+	return w, nil
+}
+
 // Add starts watching the named file or directory (non-recursively).
 func (m *RWatcher) Add(name string) error {
 	if m.isClosed {
 		return errors.New("rfsnotify instance already closed")
 	}
+	if m.ignoreRules != nil && m.ignoreRules.MatchesPath(name) {
+		return nil
+	}
 	return m.fsnotify.Add(name)
+}
+
+func (m *RWatcher) add(name string, isDir bool) error {
+	if isDir {
+		name = fmt.Sprintf("%s/", name)
+	}
+	return m.Add(name)
 }
 
 // AddRecursive starts watching the named directory and all sub-directories.
@@ -122,7 +147,7 @@ func (m *RWatcher) watchRecursive(path string, unWatch bool) error {
 					return err
 				}
 			} else {
-				if err = m.fsnotify.Add(walkPath); err != nil {
+				if err = m.add(walkPath, true); err != nil {
 					return err
 				}
 			}
